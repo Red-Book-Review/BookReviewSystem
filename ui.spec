@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['D:/BRS/ui.py'],
+    ['ui.py'],
     pathex=[],
     binaries=[],
     datas=[],
