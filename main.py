@@ -1,8 +1,7 @@
-import time, sys
-from database import Session, Review, Editor, create_tables, login_editor, register_editor, view_reviews
-import datetime
+import time, sys, datetime
 import matplotlib.pyplot as plt
-from formula import calculate_final_score  # импорт новой функции
+from database import Session, Review, Editor, create_tables, login_editor, register_editor, view_reviews
+from formula import calculate_final_score
 
 # Коэффициенты для жанров по умолчанию
 genre_weights = {
@@ -11,30 +10,28 @@ genre_weights = {
     "романтика": {"idea": 0.15, "style": 0.25, "plot": 0.20, "emotion": 0.30, "influence": 0.10},
     "поэзия": {"idea": 0.10, "style": 0.30, "plot": 0.10, "emotion": 0.40, "influence": 0.10},
     "научная литература": {"idea": 0.25, "style": 0.20, "plot": 0.25, "emotion": 0.15, "influence": 0.15},
-    "безжанровый": {}  # Здесь редактор укажет веса вручную
+    "безжанровый": {}  # вес задаётся вручную
 }
 
-def save_review_to_file(title, author, evaluator, genre, idea, idea_reason, style, style_reason, plot, plot_reason, emotion, emotion_reason, influence, influence_reason, final_score):
+def save_review_to_file(title, author, evaluator, genre, idea, idea_reason,
+                          style, style_reason, plot, plot_reason,
+                          emotion, emotion_reason, influence, influence_reason,
+                          final_score):
     filename = f"{title.replace(' ', '_')}_review.txt"
     with open(filename, "w", encoding="utf-8") as file:
         file.write(f"📖 Оценка книги: {title}\n")
         file.write(f"Автор: {author}\n")
         file.write(f"Оценщик: {evaluator}\n")
         file.write(f"Жанр: {genre}\n\n")
-        file.write(f"Идея и оригинальность: {idea}/20\n")
-        file.write(f"  Причина: {idea_reason}\n\n")
-        file.write(f"Повествование и стиль: {style}/20\n")
-        file.write(f"  Причина: {style_reason}\n\n")
-        file.write(f"Целостность сюжета: {plot}/20\n")
-        file.write(f"  Причина: {plot_reason}\n\n")
-        file.write(f"Эмоциональный отклик: {emotion}/20\n")
-        file.write(f"  Причина: {emotion_reason}\n\n")
-        file.write(f"Влияние произведения (бонус): {influence}/20\n")
-        file.write(f"  Причина: {influence_reason}\n\n")
+        file.write(f"Идея и оригинальность: {idea}/20\n  Причина: {idea_reason}\n\n")
+        file.write(f"Повествование и стиль: {style}/20\n  Причина: {style_reason}\n\n")
+        file.write(f"Целостность сюжета: {plot}/20\n  Причина: {plot_reason}\n\n")
+        file.write(f"Эмоциональный отклик: {emotion}/20\n  Причина: {emotion_reason}\n\n")
+        file.write(f"Влияние произведения (бонус): {influence}/20\n  Причина: {influence_reason}\n\n")
         file.write(f"📊 Итоговая оценка: {final_score:.2f}/100\n\n")
         file.write("Формула:\n")
-        file.write("(Идея*W1 + Стиль*W2 + Сюжет*W3 + Эмоции*W4) * Penalty + (Влияние*W5), затем умножить на 5\n")
-        file.write("Penalty = 1.0, если все оценки ≥ 10; иначе, 1.0 + ((ср. остальных – главная)/ср. остальных)*0.5\n")
+        file.write("(Идея * W1 + Стиль * W2 + Сюжет * W3 + Эмоции * W4) * Penalty + (Влияние * W5)\n")
+        file.write("Penalty = 1.0 + ((20 - Оценка главного критерия) / 20) * 2, если оценка < 20, иначе 1.0\n")
     print(f"✅ Оценка сохранена в файл: {filename}")
 
 def plot_review_scores(idea, style, plot, emotion, influence):
@@ -58,15 +55,15 @@ def edit_review():
         return
     print(f"Текущие оценки: Идея: {review.idea}, Стиль: {review.style}, Сюжет: {review.plot}, Эмоции: {review.emotion}, Влияние: {review.influence}")
     review.idea = int(input("Новая оценка 'Идея и оригинальность': "))
-    review.idea_reason = input("Новая причина оценки 'Идея и оригинальность': ").strip()
+    review.idea_reason = input("Новая причина 'Идея и оригинальность': ").strip()
     review.style = int(input("Новая оценка 'Повествование и стиль': "))
-    review.style_reason = input("Новая причина оценки 'Повествование и стиль': ").strip()
+    review.style_reason = input("Новая причина 'Повествование и стиль': ").strip()
     review.plot = int(input("Новая оценка 'Целостность сюжета': "))
-    review.plot_reason = input("Новая причина оценки 'Целостность сюжета': ").strip()
+    review.plot_reason = input("Новая причина 'Целостность сюжета': ").strip()
     review.emotion = int(input("Новая оценка 'Эмоциональный отклик': "))
-    review.emotion_reason = input("Новая причина оценки 'Эмоциональный отклик': ").strip()
+    review.emotion_reason = input("Новая причина 'Эмоциональный отклик': ").strip()
     review.influence = int(input("Новая оценка 'Влияние произведения' (бонус): "))
-    review.influence_reason = input("Новая причина оценки 'Влияние произведения': ").strip()
+    review.influence_reason = input("Новая причина 'Влияние произведения': ").strip()
 
     if review.genre != "безжанровый":
         weights = genre_weights.get(review.genre, {})
@@ -84,30 +81,25 @@ def edit_review():
             session.close()
             return
 
-    # Используем новую функцию расчёта итоговой оценки
     review.final_score = calculate_final_score(review.idea, review.style,
                                                review.plot, review.emotion,
                                                review.influence, weights)
+    review.review_date = datetime.date.today()
     session.commit()
     session.close()
     print("✅ Оценка успешно обновлена.")
 
 def adaptive_review_check(genre, current_score, review_id):
-    # Анализируем отзывы данного жанра
     session = Session()
     reviews = session.query(Review).filter(Review.genre == genre).all()
-    count_reviews = len(reviews)
-    if count_reviews < 100:
+    if len(reviews) < 100:
         session.close()
-        return  # Адаптация не требуется
-    avg_score = sum(r.final_score for r in reviews) / count_reviews
+        return
+    avg_score = sum(r.final_score for r in reviews) / len(reviews)
     session.close()
-    # Если отклонение больше 15% от среднего, предлагаем обновление
     if abs(current_score - avg_score) > 0.15 * avg_score:
-        choice = input(f"Средняя оценка по жанру '{genre}' составляет {avg_score:.2f}/100. "
-                       f"Ваша оценка {current_score:.2f}/100 сильно отличается. Изменить оценку на рекомендуемую? (y/n): ").strip().lower()
+        choice = input(f"Средняя оценка по жанру '{genre}' составляет {avg_score:.2f}/100. Ваша оценка {current_score:.2f}/100 сильно отличается. Изменить оценку на рекомендуемое? (y/n): ").strip().lower()
         if choice == "y":
-            # Обновляем оценку в базе
             session = Session()
             review = session.query(Review).filter_by(id=review_id).first()
             if review:
@@ -133,7 +125,7 @@ def write_review(username):
         weights["influence"] = float(input("Процент для 'Влияние произведения' (бонус): "))
         total_weight = sum(weights.values())
         if abs(total_weight - 1.0) > 1e-6:
-            print("❌ Ошибка: сумма всех значений должна быть 1.0! Попробуйте снова.")
+            print("❌ Ошибка: сумма значений должна быть 1.0!")
             session.close()
             return
     else:
@@ -177,11 +169,9 @@ def write_review(username):
     if save_file == "y":
         save_review_to_file(title, author, username, genre, idea, idea_reason,
                             style, style_reason, plot, plot_reason,
-                            emotion, emotion_reason, influence,
-                            influence_reason, final_score)
+                            emotion, emotion_reason, influence, influence_reason, final_score)
         plot_review_scores(idea, style, plot, emotion, influence)
     
-    # Если отзыв сохранён, проверяем, есть ли расхождение с жанровым средним
     if review_id is not None:
         adaptive_review_check(genre, final_score, review_id)
 
@@ -221,7 +211,7 @@ def simulate_loading():
 
 def main():
     print("\n🔹 Добро пожаловать в систему оценки книг 🔹")
-    simulate_loading()  # Показываем анимацию загрузки после приветствия
+    simulate_loading()
     create_tables()
     logged_in = False
     current_user = None

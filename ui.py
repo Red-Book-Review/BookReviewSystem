@@ -1,9 +1,9 @@
 from tkinter import *
 from tkinter import simpledialog, messagebox
 import datetime
-from database import create_tables, login_editor, register_editor, view_reviews, Session, Review
+from database import create_tables, login_editor, register_editor, Session, Review
 from formula import calculate_final_score
-from main import genre_weights
+from main import genre_weights, save_review_to_file, plot_review_scores
 
 current_user = None
 root = None
@@ -36,7 +36,6 @@ def register():
             session.close()
 
 def view_reviews_ui():
-    # Получаем отзывы из базы и выводим в новом окне
     session = Session()
     reviews = session.query(Review).all()
     session.close()
@@ -52,8 +51,13 @@ def view_reviews_ui():
             text_area.insert(END, f"📖 {review.title} ({review.author}) - {review.genre}\n")
             text_area.insert(END, f"Оценка: {review.final_score}/100\n")
             text_area.insert(END, f"Оценил: {review.evaluator} | Дата: {review.review_date}\n")
+            text_area.insert(END, f"Причина 'Идея': {review.idea_reason}\n")
+            text_area.insert(END, f"Причина 'Стиль': {review.style_reason}\n")
+            text_area.insert(END, f"Причина 'Сюжет': {review.plot_reason}\n")
+            text_area.insert(END, f"Причина 'Эмоции': {review.emotion_reason}\n")
+            text_area.insert(END, f"Причина 'Влияние': {review.influence_reason}\n")
             text_area.insert(END, "-------------------------\n")
-            
+
 def write_review_ui():
     global current_user
     if not current_user:
@@ -75,8 +79,11 @@ def write_review_ui():
     except Exception:
         messagebox.showerror("Ошибка", "Некорректный ввод числовых значений.")
         return
-    # В этом примере причины задаём пустыми
-    idea_reason = style_reason = plot_reason = emotion_reason = influence_reason = ""
+    idea_reason = simpledialog.askstring("Причина оценки", "Причина 'Идея':", initialvalue="", parent=root)
+    style_reason = simpledialog.askstring("Причина оценки", "Причина 'Стиль':", initialvalue="", parent=root)
+    plot_reason = simpledialog.askstring("Причина оценки", "Причина 'Сюжет':", initialvalue="", parent=root)
+    emotion_reason = simpledialog.askstring("Причина оценки", "Причина 'Эмоции':", initialvalue="", parent=root)
+    influence_reason = simpledialog.askstring("Причина оценки", "Причина 'Влияние':", initialvalue="", parent=root)
     weights = genre_weights.get(genre)
     if weights is None or genre == "безжанровый":
         messagebox.showinfo("Информация", "Безжанровый режим активирован. Укажите веса вручную.")
@@ -103,6 +110,16 @@ def write_review_ui():
     session.commit()
     session.close()
     messagebox.showinfo("Отзыв", "Отзыв сохранён в базе данных.")
+    
+    save_file = messagebox.askyesno("Сохранить в файл", "Сохранить подробное описание оценки в файл?")
+    if save_file:
+        save_review_to_file(title, author, current_user, genre, idea, idea_reason,
+                            style, style_reason, plot, plot_reason,
+                            emotion, emotion_reason, influence, influence_reason, final_score)
+    
+    plot_graph = messagebox.askyesno("Показать график", "Показать график оценок?")
+    if plot_graph:
+        plot_review_scores(idea, style, plot, emotion, influence)
 
 def edit_review_ui():
     review_id = simpledialog.askstring("Редактировать отзыв", "Введите ID отзыва для редактирования:")
@@ -121,11 +138,11 @@ def edit_review_ui():
     new_emotion = simpledialog.askinteger("Редактировать отзыв", f"Новая оценка 'Эмоции' (текущее {review.emotion}):")
     new_influence = simpledialog.askinteger("Редактировать отзыв", f"Новая оценка 'Влияние' (текущее {review.influence}):")
     
-    new_idea_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Идея':")
-    new_style_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Стиль':")
-    new_plot_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Сюжет':")
-    new_emotion_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Эмоции':")
-    new_influence_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Влияние':")
+    new_idea_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Идея':", initialvalue=review.idea_reason, parent=root)
+    new_style_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Стиль':", initialvalue=review.style_reason, parent=root)
+    new_plot_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Сюжет':", initialvalue=review.plot_reason, parent=root)
+    new_emotion_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Эмоции':", initialvalue=review.emotion_reason, parent=root)
+    new_influence_reason = simpledialog.askstring("Редактировать отзыв", "Новая причина 'Влияние':", initialvalue=review.influence_reason, parent=root)
     
     review.idea = new_idea if new_idea is not None else review.idea
     review.style = new_style if new_style is not None else review.style
@@ -152,7 +169,8 @@ def edit_review_ui():
             messagebox.showerror("Ошибка", "Неверный ввод весов. Отмена редактирования.")
             session.close()
             return
-    review.final_score = calculate_final_score(review.idea, review.style, review.plot, review.emotion, review.influence, weights)
+    review.final_score = calculate_final_score(review.idea, review.style, review.plot,
+                                                review.emotion, review.influence, weights)
     session.commit()
     session.close()
     messagebox.showinfo("Успех", "Отзыв успешно обновлён!")
@@ -177,32 +195,28 @@ def delete_review_ui():
 
 def show_auth_ui():
     global auth_frame, app_frame
-    # Показываем только фрейм авторизации
     if app_frame is not None:
         app_frame.pack_forget()
     auth_frame.pack(fill=BOTH, expand=True)
 
 def show_app_ui():
     global auth_frame, app_frame
-    # Скрываем фрейм авторизации и показываем фрейм с функционалом
     if auth_frame is not None:
         auth_frame.pack_forget()
     app_frame.pack(fill=BOTH, expand=True)
 
 def create_ui():
     global root, auth_frame, app_frame
-    create_tables()  # Убедимся, что таблицы созданы
+    create_tables()
     root = Tk()
     root.title("Система оценки книг")
     root.geometry("400x400")
     
-    # Фрейм для авторизации
     auth_frame = Frame(root)
     Button(auth_frame, text="Войти", width=25, command=login).pack(pady=5)
     Button(auth_frame, text="Регистрация", width=25, command=register).pack(pady=5)
     auth_frame.pack(fill=BOTH, expand=True)
     
-    # Фрейм для основной функциональности (изначально скрыт)
     app_frame = Frame(root)
     Button(app_frame, text="Просмотреть отзывы", width=25, command=view_reviews_ui).pack(pady=5)
     Button(app_frame, text="Написать отзыв", width=25, command=write_review_ui).pack(pady=5)

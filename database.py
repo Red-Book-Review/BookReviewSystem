@@ -1,6 +1,4 @@
-import os
-import datetime
-import bcrypt
+import os, datetime, bcrypt
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -8,17 +6,14 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Загружаем переменные окружения
 load_dotenv()
 DATABASE_URL = os.getenv("DB_EXTERNAL_DATABASE_URL")
-
 if not DATABASE_URL:
     print("❌ Ошибка: DATABASE_URL не найден. Проверьте .env файл.")
     exit(1)
 
-# Создаём подключение к БД
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
 
-# Определяем таблицы
 class Editor(Base):
     __tablename__ = "editors"
     id = Column(Integer, primary_key=True)
@@ -39,19 +34,17 @@ class Review(Base):
     influence = Column(Integer)
     final_score = Column(Float)
     review_date = Column(Date)
-    # Новые поля для сохранения причины оценки каждого критерия
+    # Новые поля для причин оценок
     idea_reason = Column(String(500))
     style_reason = Column(String(500))
     plot_reason = Column(String(500))
     emotion_reason = Column(String(500))
     influence_reason = Column(String(500))
 
-# Функция создания таблиц
 def create_tables():
     Base.metadata.create_all(engine)
-    migrate_reviews_table()  # Добавляем вызов миграции после создания таблиц
+    migrate_reviews_table()
 
-# Функция для миграции таблицы reviews (если уже существует)
 def migrate_reviews_table():
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS idea_reason VARCHAR(500);"))
@@ -61,7 +54,6 @@ def migrate_reviews_table():
         conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS influence_reason VARCHAR(500);"))
         conn.commit()
 
-# Просмотр всех отзывов
 def view_reviews():
     session = Session()
     reviews = session.query(Review).all()
@@ -74,11 +66,24 @@ def view_reviews():
             print(f"Оценил: {review.evaluator} | Дата: {review.review_date}")
     session.close()
 
-# Регистрация нового редактора
 def register_editor():
     session = Session()
     username = input("Введите новый логин: ").strip()
+    if not username:
+        print("❌ Логин не может быть пустым.")
+        session.close()
+        return
+    # Проверка на существование редактора с таким логином
+    existing = session.query(Editor).filter_by(username=username).first()
+    if existing:
+        print("❌ Такой логин уже существует. Выберите другой.")
+        session.close()
+        return
     password = input("Введите новый пароль: ").strip()
+    if not password:
+        print("❌ Пароль не может быть пустым.")
+        session.close()
+        return
     password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     new_editor = Editor(username=username, password_hash=password_hash)
     session.add(new_editor)
@@ -90,7 +95,6 @@ def register_editor():
         print("❌ Ошибка регистрации:", e)
     session.close()
 
-# Вход редактора
 def login_editor(username, password):
     session = Session()
     editor = session.query(Editor).filter_by(username=username).first()
