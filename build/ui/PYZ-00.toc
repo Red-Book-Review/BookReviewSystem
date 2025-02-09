@@ -1556,6 +1556,7 @@
   ('tkinter.simpledialog',
    'C:\\Python313\\Lib\\tkinter\\simpledialog.py',
    'PYMODULE'),
+  ('tkinter.ttk', 'C:\\Python313\\Lib\\tkinter\\ttk.py', 'PYMODULE'),
   ('token', 'C:\\Python313\\Lib\\token.py', 'PYMODULE'),
   ('tokenize', 'C:\\Python313\\Lib\\tokenize.py', 'PYMODULE'),
   ('tomllib', 'C:\\Python313\\Lib\\tomllib\\__init__.py', 'PYMODULE'),

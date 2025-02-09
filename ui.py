@@ -1,9 +1,11 @@
 from tkinter import *
+from tkinter import ttk
 from tkinter import simpledialog, messagebox
-import datetime
-from database import create_tables, login_editor, register_editor, Session, Review
+import datetime, threading
+import bcrypt
+from database import create_tables, login_editor, Session, Review, Editor
 from formula import calculate_final_score
-from genres import genre_weights  # импорт из нового файла жанров
+from genres import genre_weights
 # ...existing imports...
 
 # Можно добавить импорт ttk и сторонних библиотек для tooltips и тем оформления
@@ -53,14 +55,43 @@ current_user = None
 root = None
 main_frame = None  # Новая основная панель вместо auth_frame/app_frame
 
+def initialize_database():
+    def db_worker():
+        create_tables()
+        
+    thread = threading.Thread(target=db_worker)
+    thread.start()
+    return thread
+
 def show_loading_screen():
+    # Новый splash screen с прогрессбаром
     splash = Toplevel()
+    splash.title("Загрузка")
+    splash.geometry("300x150+500+300")
     splash.overrideredirect(True)
-    splash.geometry("300x100+500+300")
-    Label(splash, text="Загрузка системы...\nПодождите...", font=("Arial", 12)).pack(expand=True)
-    splash.update()
-    # Уменьшаем задержку (например, 500 мс)
-    splash.after(500, splash.destroy)
+    
+    style = ttk.Style()
+    style.theme_use('clam')  # Современная тема
+    
+    frame = ttk.Frame(splash, padding="20")
+    frame.pack(fill=BOTH, expand=True)
+    
+    loading_label = ttk.Label(frame, text="Загрузка системы...", font=("Arial", 12))
+    loading_label.pack(pady=10)
+    
+    progress = ttk.Progressbar(frame, length=200, mode='determinate')
+    progress.pack(pady=10)
+    
+    def update_progress():
+        for i in range(100):
+            progress['value'] = i
+            loading_label.config(text=f"Загрузка системы... {i}%")
+            splash.update()
+            splash.after(20)  # Короткая задержка для анимации
+        splash.after(200, splash.destroy)
+    
+    splash.after(100, update_progress)
+    return splash
 
 # Новая функция для показа окна входа в систему
 def show_login_ui():
@@ -107,7 +138,12 @@ def show_menu_ui():
     Button(main_frame, text="Удалить отзыв", width=25, command=delete_review_ui).pack(pady=3)
     Button(main_frame, text="Просмотреть отзывы", width=25, command=view_reviews_ui).pack(pady=3)
     Button(main_frame, text="Сменить пароль", width=25, command=change_password_ui).pack(pady=3)
-    Button(main_frame, text="Выход", width=25, command=root.quit).pack(pady=3)
+    Button(main_frame, text="Выход", width=25, command=logout).pack(pady=3)
+
+def logout():
+    global current_user
+    current_user = None
+    show_login_ui()
 
 # Изменяем функции write_review_ui и edit_review_ui для проверки лимитов оценок (0-20)
 def write_review_ui():
@@ -237,7 +273,7 @@ def edit_review_ui():
         return
     new_influence_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Влияние':", parent=main_frame)
     weights = genre_weights.get(review.genre)
-    if weights is None and review.genre == "безжанровый":
+    if weights is None or review.genre == "безжанровый":
         messagebox.showinfo("Информация", "Безжанровый режим: укажите новые веса вручную.")
         try:
             idea_w = float(simpledialog.askstring("Вес", "Новый вес для 'Идея':", parent=main_frame))
@@ -306,12 +342,52 @@ def delete_review_ui():
 
 # Функция смены пароля без изменений
 def change_password_ui():
-    username = simpledialog.askstring("Смена пароля", "Введите ваш логин:", parent=main_frame)
-    if not username:
-        messagebox.showerror("Ошибка", "Логин не введён!")
-        return
-    import database
-    database.change_password_editor(username)
+    # Очищаем main_frame и показываем форму смены пароля
+    for widget in main_frame.winfo_children():
+        widget.destroy()
+        
+    Label(main_frame, text="Смена пароля", font=("Arial", 14)).pack(pady=10)
+    
+    current_pwd = Entry(main_frame, show="*")
+    current_pwd.insert(0, "Текущий пароль")
+    current_pwd.pack(pady=5)
+    
+    new_pwd = Entry(main_frame, show="*")
+    new_pwd.insert(0, "Новый пароль")
+    new_pwd.pack(pady=5)
+    
+    def perform_change():
+        curr = current_pwd.get().strip()
+        new = new_pwd.get().strip()
+        if not curr or not new:
+            messagebox.showerror("Ошибка", "Заполните все поля!")
+            return
+            
+        session = Session()
+        editor = session.query(Editor).filter_by(username=current_user).first()
+        if not editor:
+            messagebox.showerror("Ошибка", "Пользователь не найден!")
+            session.close()
+            return
+            
+        if not bcrypt.checkpw(curr.encode(), editor.password_hash.encode()):
+            messagebox.showerror("Ошибка", "Неверный текущий пароль!")
+            session.close()
+            return
+            
+        editor.password_hash = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
+        try:
+            session.commit()
+            messagebox.showinfo("Успех", "Пароль успешно изменён!")
+            show_menu_ui()  # Возврат в главное меню
+        except Exception as e:
+            session.rollback()
+            messagebox.showerror("Ошибка", f"Ошибка смены пароля: {e}")
+        finally:
+            session.close()
+    
+    Button(main_frame, text="Сменить пароль", width=25, command=perform_change).pack(pady=5)
+    Button(main_frame, text="Назад", width=25, command=show_menu_ui).pack(pady=5)
 
 # Функция просмотра отзывов – можем вывести их в окно, созданное внутри main_frame
 def view_reviews_ui():
@@ -340,20 +416,59 @@ def view_reviews_ui():
             text_area.insert(END, "-------------------------\n")
     Button(main_frame, text="Назад в меню", width=25, command=show_menu_ui).pack(pady=5)
 
+# Новая функция регистрации через UI
+def register():
+    username = simpledialog.askstring("Регистрация", "Введите новый логин:", parent=main_frame)
+    password = simpledialog.askstring("Регистрация", "Введите новый пароль:", show='*', parent=main_frame)
+    if not username or not password:
+        messagebox.showerror("Ошибка", "Все поля должны быть заполнены!")
+        return
+    session = Session()
+    existing = session.query(Editor).filter_by(username=username).first()
+    if existing:
+        messagebox.showerror("Ошибка", "Такой логин уже существует.")
+        session.close()
+        return
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    new_editor = Editor(username=username, password_hash=password_hash)
+    session.add(new_editor)
+    try:
+        session.commit()
+        messagebox.showinfo("Регистрация", "Редактор зарегистрирован.")
+    except Exception as e:
+        session.rollback()
+        messagebox.showerror("Ошибка", f"Ошибка регистрации: {e}")
+    session.close()
+
 def create_ui():
     global root, main_frame
-    create_tables()
     root = Tk()
     root.title("Система оценки книг")
     root.geometry("600x500")
     
-    show_loading_screen()
+    # Устанавливаем стиль
+    style = ttk.Style()
+    style.theme_use('clam')
     
-    main_frame = Frame(root)
+    # Настройка стилей для кнопок и фреймов
+    style.configure('TButton', padding=6, relief="flat", background="#2196f3")
+    style.configure('TFrame', background="#f5f5f5")
+    style.configure('TLabel', background="#f5f5f5", font=('Arial', 10))
+    
+    splash = show_loading_screen()
+    db_thread = initialize_database()
+    
+    main_frame = ttk.Frame(root, padding="10")
     main_frame.pack(fill=BOTH, expand=True)
-    # Первый экран – вход в систему
-    show_login_ui()
     
+    # Ждём завершения инициализации БД
+    def check_ready():
+        if db_thread.is_alive():
+            root.after(100, check_ready)
+        else:
+            show_login_ui()
+    
+    root.after(100, check_ready)
     root.mainloop()
 
 if __name__ == "__main__":

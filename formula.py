@@ -1,15 +1,28 @@
 def calculate_final_score(idea, style, plot, emotion, influence, weights):
-    # Вычисляем основной процент по критериям (максимум 100)
-    main_total = idea * weights["idea"] + style * weights["style"] + plot * weights["plot"] + emotion * weights["emotion"]
-    main_max = 20 * (weights["idea"] + weights["style"] + weights["plot"] + weights["emotion"])
-    main_percentage = (main_total / main_max) * 100
+    """
+    Улучшенная формула расчета оценки:
+    1. Базовый расчет с весами (max 85 баллов)
+    2. Штраф за низкие оценки (до -15 баллов)
+    3. Бонус за влияние (до +15 баллов)
+    """
+    # Базовая оценка (максимум 85)
+    base_score = (
+        (idea * weights["idea"] + 
+         style * weights["style"] + 
+         plot * weights["plot"] + 
+         emotion * weights["emotion"]) / 
+        (weights["idea"] + weights["style"] + weights["plot"] + weights["emotion"])
+    ) * 4.25  # 4.25 чтобы максимум был 85
 
-    # Новый коэффициент штрафа: диапазон [0.7, 1.0] при вариациях минимального балла
-    penalty = 0.7 + (0.3 * (min(idea, style, plot, emotion) / 20))
-    penalized_score = main_percentage * penalty
+    # Штраф за низкие оценки (чем ниже минимальная оценка, тем больше штраф)
+    min_score = min(idea, style, plot, emotion)
+    penalty = (20 - min_score) * 0.75  # максимальный штраф 15 баллов
 
-    # Бонус сохраняется как раньше
-    bonus_score = (influence / 20) * 100 * weights["influence"]
+    # Бонус за влияние (максимум 15 баллов)
+    influence_bonus = (influence / 20) * 15
 
-    final_score = penalized_score + bonus_score
-    return min(final_score, 100)
+    # Итоговая оценка
+    final_score = base_score - penalty + influence_bonus
+
+    # Ограничиваем результат диапазоном [0, 100]
+    return max(0, min(100, final_score))
