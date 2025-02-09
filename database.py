@@ -41,6 +41,14 @@ class Review(Base):
     emotion_reason = Column(String(500))
     influence_reason = Column(String(500))
 
+# Добавляем новую модель для истории удалённых отзывов
+class DeletedReview(Base):
+    __tablename__ = "deleted_reviews"
+    id = Column(Integer, primary_key=True)
+    review_id = Column(Integer)
+    deletion_reason = Column(Integer, nullable=True)  # 1,2,3 для стандартных причин
+    deletion_date = Column(Date, default=datetime.date.today)
+
 def create_tables():
     Base.metadata.create_all(engine)
     migrate_reviews_table()
@@ -103,3 +111,29 @@ def login_editor(username, password):
         return True
     session.close()
     return False
+
+def change_password_editor(username):
+    session = Session()
+    editor = session.query(Editor).filter_by(username=username).first()
+    if not editor:
+        print("❌ Редактор не найден.")
+        session.close()
+        return
+    current_password = input("Введите текущий пароль: ").strip()
+    if not bcrypt.checkpw(current_password.encode(), editor.password_hash.encode()):
+        print("❌ Неверный текущий пароль.")
+        session.close()
+        return
+    new_password = input("Введите новый пароль: ").strip()
+    if not new_password:
+        print("❌ Пароль не может быть пустым.")
+        session.close()
+        return
+    editor.password_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    try:
+        session.commit()
+        print("✅ Пароль успешно изменён.")
+    except Exception as e:
+        session.rollback()
+        print("❌ Ошибка смены пароля:", e)
+    session.close()
