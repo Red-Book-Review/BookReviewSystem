@@ -2,4 +2,4 @@ bcrypt==3.2.0
 python-dotenv==0.21.0
 SQLAlchemy==1.4.46
 matplotlib==3.6.3
-pyinstaller==5.7.0
+pyinstaller==6.10.0
