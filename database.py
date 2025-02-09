@@ -2,19 +2,12 @@ import os
 import datetime
 import bcrypt
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Загружаем переменные окружения
 load_dotenv()
-DATABASE_URL = os.getenv("DB_EXTERNAL_DATABASE_URL")  # Используем внешний URL
-
-print("Текущая директория:", os.getcwd())  # Проверяем, где ищем .env
-
-load_dotenv()  # Загружаем переменные из .env
-
-DATABASE_URL = os.getenv("DB_EXTERNAL_DATABASE_URL")  # Загружаем URL базы данных
-print("Загруженный DATABASE_URL:", DATABASE_URL)  # Проверяем, загружены ли данные
+DATABASE_URL = os.getenv("DB_EXTERNAL_DATABASE_URL")
 
 if not DATABASE_URL:
     print("❌ Ошибка: DATABASE_URL не найден. Проверьте .env файл.")
@@ -46,10 +39,40 @@ class Review(Base):
     influence = Column(Integer)
     final_score = Column(Float)
     review_date = Column(Date)
+    # Новые поля для сохранения причины оценки каждого критерия
+    idea_reason = Column(String(500))
+    style_reason = Column(String(500))
+    plot_reason = Column(String(500))
+    emotion_reason = Column(String(500))
+    influence_reason = Column(String(500))
 
 # Функция создания таблиц
 def create_tables():
     Base.metadata.create_all(engine)
+    migrate_reviews_table()  # Добавляем вызов миграции после создания таблиц
+
+# Функция для миграции таблицы reviews (если уже существует)
+def migrate_reviews_table():
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS idea_reason VARCHAR(500);"))
+        conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS style_reason VARCHAR(500);"))
+        conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS plot_reason VARCHAR(500);"))
+        conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS emotion_reason VARCHAR(500);"))
+        conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS influence_reason VARCHAR(500);"))
+        conn.commit()
+
+# Просмотр всех отзывов
+def view_reviews():
+    session = Session()
+    reviews = session.query(Review).all()
+    if not reviews:
+        print("❌ Нет сохранённых оценок.")
+    else:
+        for review in reviews:
+            print(f"\n📖 {review.title} ({review.author}) - {review.genre}")
+            print(f"Оценка: {review.final_score}/100")
+            print(f"Оценил: {review.evaluator} | Дата: {review.review_date}")
+    session.close()
 
 # Регистрация нового редактора
 def register_editor():
@@ -68,15 +91,11 @@ def register_editor():
     session.close()
 
 # Вход редактора
-def login_editor():
+def login_editor(username, password):
     session = Session()
-    username = input("Введите логин: ").strip()
-    password = input("Введите пароль: ").strip()
     editor = session.query(Editor).filter_by(username=username).first()
-    session.close()
     if editor and bcrypt.checkpw(password.encode(), editor.password_hash.encode()):
-        print("✅ Успешный вход.")
-        return username
-    else:
-        print("❌ Неверный логин или пароль.")
-        return None
+        session.close()
+        return True
+    session.close()
+    return False
