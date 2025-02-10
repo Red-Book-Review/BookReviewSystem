@@ -1,5 +1,58 @@
+# Виртуальное окружение и локальные файлы окружения
+venv/
+env/
 .env
-BRS.code-workspace
+
+# Python байт-код и кэш
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Распространённые каталоги для разработки
+develop-eggs/
+dist/
+build/
+eggs/
+*.egg-info/
+
+# IDE и рабочие пространства
+.idea/
 .vscode/
+*.sublime-workspace
+*.sublime-project
+BRS.code-workspace
+
+# Локальные файлы и логи
+*.log
+*.db
+*.sqlite3
+deletion_log.txt
+reviews.db
+temp/
+
+# Файлы сборки и спецификации
+*.spec
+*.exe
+dist/
+build/
+output/
+
+# Файлы баз сборки, которые не нужны конечному пользователю
+/d:/BookReviewSystem/src/build/
+# Дополнительно можно исключить миграционные файлы, если они используются локально
+/d:/BookReviewSystem/src/core/database/migrations/
+
+# Системные файлы и прочие временные
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Временные файлы
+*.tmp
+*.bak
+*.swp
+*~
+
+# Файлы настроек для локальной разработки
+config.local.py
+settings.local.py

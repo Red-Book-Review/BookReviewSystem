@@ -1,475 +1,846 @@
+# Стандартные библиотеки
 from tkinter import *
-from tkinter import ttk
-from tkinter import simpledialog, messagebox
-import datetime, threading
+from tkinter import ttk, simpledialog, messagebox, filedialog
+import datetime
+import threading
+
+# Внешние зависимости
 import bcrypt
-from database import create_tables, login_editor, Session, Review, Editor
-from formula import calculate_final_score
+
+# Локальные модули
+from database import (
+    create_tables, login_editor, Session, 
+    Review, Editor, DeletedReview
+)
+from analytics import ReviewAnalytics, calculate_final_score  # Исправленный импорт
 from genres import genre_weights
-# ...existing imports...
 
-# Можно добавить импорт ttk и сторонних библиотек для tooltips и тем оформления
-# from tkinter import ttk
-# from ttkthemes import ThemedTk
+# Константы
+WINDOW_SIZE = "800x600"
+PADDING = 10
+BUTTON_WIDTH = 25
 
-# Новый класс для всплывающих подсказок
-class ToolTip:
-    def __init__(self, widget, text='widget info'):
-        self.waittime = 500     # задержка в мс
-        self.wraplength = 180   # ширина текста
-        self.widget = widget
-        self.text = text
-        self.widget.bind("<Enter>", self.enter)
-        self.widget.bind("<Leave>", self.leave)
-        self.widget.bind("<ButtonPress>", self.leave)
-        self.id = None
-        self.tw = None
-    def enter(self, event=None):
-        self.schedule()
-    def leave(self, event=None):
-        self.unschedule()
-        self.hidetip()
-    def schedule(self):
-        self.unschedule()
-        self.id = self.widget.after(self.waittime, self.showtip)
-    def unschedule(self):
-        id_ = self.id
-        self.id = None
-        if id_:
-            self.widget.after_cancel(id_)
-    def showtip(self, event=None):
-        x, y, cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + cy + self.widget.winfo_rooty() + 25
-        self.tw = Toplevel(self.widget)
-        self.tw.wm_overrideredirect(True)
-        self.tw.wm_geometry("+%d+%d" % (x, y))
-        label = Label(self.tw, text=self.text, justify='left', background="#ffffe0", relief='solid', borderwidth=1, wraplength=self.wraplength)
-        label.pack(ipadx=1)
-    def hidetip(self):
-        if self.tw:
-            self.tw.destroy()
-            self.tw = None
+class BookReviewUI:
+    def __init__(self):
+        self.root = None
+        self.main_frame = None
+        self.current_user = None
+        self.style = None
+        self.setup_ui()
 
-current_user = None
-root = None
-main_frame = None  # Новая основная панель вместо auth_frame/app_frame
-
-def initialize_database():
-    def db_worker():
-        create_tables()
+    def setup_ui(self):
+        # Создаем главное окно до показа splash screen
+        self.root = Tk()
+        self.root.withdraw()  # Скрываем главное окно до завершения загрузки
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         
-    thread = threading.Thread(target=db_worker)
-    thread.start()
-    return thread
+        # Показываем splash screen
+        splash = self.show_loading_screen()
+        
+        # Настраиваем главное окно
+        self.root.title("Система оценки книг")
+        self.root.geometry(WINDOW_SIZE)
+        
+        self.setup_styles()
+        self.init_database()
+        
+        # После загрузки показываем главное окно
+        self.root.deiconify()
 
-def show_loading_screen():
-    # Новый splash screen с прогрессбаром
-    splash = Toplevel()
-    splash.title("Загрузка")
-    splash.geometry("300x150+500+300")
-    splash.overrideredirect(True)
-    
-    style = ttk.Style()
-    style.theme_use('clam')  # Современная тема
-    
-    frame = ttk.Frame(splash, padding="20")
-    frame.pack(fill=BOTH, expand=True)
-    
-    loading_label = ttk.Label(frame, text="Загрузка системы...", font=("Arial", 12))
-    loading_label.pack(pady=10)
-    
-    progress = ttk.Progressbar(frame, length=200, mode='determinate')
-    progress.pack(pady=10)
-    
-    def update_progress():
-        for i in range(100):
-            progress['value'] = i
-            loading_label.config(text=f"Загрузка системы... {i}%")
+    def show_loading_screen(self):
+        """Улучшенный экран загрузки"""
+        splash = Toplevel()
+        splash.title("Загрузка")
+        
+        # Размещаем окно по центру экрана
+        w = 300
+        h = 150
+        ws = splash.winfo_screenwidth()
+        hs = splash.winfo_screenheight()
+        x = (ws/2) - (w/2)
+        y = (hs/2) - (h/2)
+        splash.geometry(f'{w}x{h}+{int(x)}+{int(y)}')
+        
+        splash.overrideredirect(True)
+        splash.attributes('-topmost', True)
+        
+        # Создаем и размещаем виджеты
+        ttk.Label(
+            splash,
+            text="Загрузка системы...",
+            font=("Arial", 12)
+        ).pack(pady=20)
+        
+        progress = ttk.Progressbar(
+            splash,
+            mode='determinate',
+            length=200
+        )
+        progress.pack(pady=10)
+        
+        status_label = ttk.Label(
+            splash,
+            text="Инициализация..."
+        )
+        status_label.pack(pady=5)
+        
+        splash.update()
+        
+        return splash, progress, status_label
+
+    def init_database(self):
+        """Инициализация с отображением прогресса"""
+        splash, progress, status = self.show_loading_screen()
+        
+        def update_status(msg, value):
+            status.config(text=msg)
+            progress['value'] = value
             splash.update()
-            splash.after(20)  # Короткая задержка для анимации
-        splash.after(200, splash.destroy)
-    
-    splash.after(100, update_progress)
-    return splash
-
-# Новая функция для показа окна входа в систему
-def show_login_ui():
-    global main_frame
-    for widget in main_frame.winfo_children():
-        widget.destroy()
-    Label(main_frame, text="Вход в систему", font=("Arial", 14)).pack(pady=10)
-    username_entry = Entry(main_frame)
-    username_entry.pack(pady=5)
-    username_entry.insert(0, "Логин")
-    password_entry = Entry(main_frame, show="*")
-    password_entry.pack(pady=5)
-    password_entry.insert(0, "Пароль")
-    
-    def perform_login():
-        global current_user
-        username = username_entry.get().strip()
-        password = password_entry.get().strip()
-        if username and password:
-            if login_editor(username, password):
-                current_user = username
-                messagebox.showinfo("Успех", "Успешный вход!")
-                show_menu_ui()
-            else:
-                messagebox.showerror("Ошибка", "Неверный логин или пароль.")
-        else:
-            messagebox.showerror("Ошибка", "Заполните оба поля!")
-    
-    btn_login = Button(main_frame, text="Войти", width=25, command=perform_login)
-    btn_login.pack(pady=5)
-    btn_register = Button(main_frame, text="Регистрация", width=25, command=register)
-    btn_register.pack(pady=5)
-    # ...можно добавить кнопку выхода...
-    
-# Новая функция – основное меню для всех действий
-def show_menu_ui():
-    for widget in main_frame.winfo_children():
-        widget.destroy()
-    Label(main_frame, text=f"Меню (Пользователь: {current_user})", font=("Arial", 14)).pack(pady=10)
-    
-    # Кнопки запускают функции, которые (при необходимости) обновляют main_frame
-    Button(main_frame, text="Написать отзыв", width=25, command=write_review_ui).pack(pady=3)
-    Button(main_frame, text="Редактировать отзыв", width=25, command=edit_review_ui).pack(pady=3)
-    Button(main_frame, text="Удалить отзыв", width=25, command=delete_review_ui).pack(pady=3)
-    Button(main_frame, text="Просмотреть отзывы", width=25, command=view_reviews_ui).pack(pady=3)
-    Button(main_frame, text="Сменить пароль", width=25, command=change_password_ui).pack(pady=3)
-    Button(main_frame, text="Выход", width=25, command=logout).pack(pady=3)
-
-def logout():
-    global current_user
-    current_user = None
-    show_login_ui()
-
-# Изменяем функции write_review_ui и edit_review_ui для проверки лимитов оценок (0-20)
-def write_review_ui():
-    if not current_user:
-        messagebox.showerror("Ошибка", "Сначала войдите в систему!")
-        return
-    # Используем simpledialog для ввода остальных данных (можно комбинировать с полями в main_frame)
-    title = simpledialog.askstring("Новый отзыв", "Название книги:", parent=main_frame)
-    author = simpledialog.askstring("Новый отзыв", "Автор:", parent=main_frame)
-    genre_str = simpledialog.askstring("Новый отзыв", "Жанр:", parent=main_frame)
-    if not all([title, author, genre_str]):
-        messagebox.showerror("Ошибка", "Все поля должны быть заполнены.")
-        return
-    genre = genre_str.lower()
-    try:
-        idea = int(simpledialog.askstring("Новый отзыв", "Оценка 'Идея' (0-20):", parent=main_frame))
-        style = int(simpledialog.askstring("Новый отзыв", "Оценка 'Стиль' (0-20):", parent=main_frame))
-        plot = int(simpledialog.askstring("Новый отзыв", "Оценка 'Сюжет' (0-20):", parent=main_frame))
-        emotion = int(simpledialog.askstring("Новый отзыв", "Оценка 'Эмоции' (0-20):", parent=main_frame))
-        influence = int(simpledialog.askstring("Новый отзыв", "Оценка 'Влияние' (0-20):", parent=main_frame))
-    except Exception:
-        messagebox.showerror("Ошибка", "Некорректный ввод числовых значений.")
-        return
-    # Проверяем лимиты
-    for score, crit in [(idea, "Идея"), (style, "Стиль"), (plot, "Сюжет"), (emotion, "Эмоции"), (influence, "Влияние")]:
-        if score < 0 or score > 20:
-            messagebox.showerror("Ошибка", f"{crit}: балл должен быть от 0 до 20.")
-            return
-    idea_reason = simpledialog.askstring("Причина оценки", "Причина 'Идея':", initialvalue="", parent=main_frame)
-    style_reason = simpledialog.askstring("Причина оценки", "Причина 'Стиль':", initialvalue="", parent=main_frame)
-    plot_reason = simpledialog.askstring("Причина оценки", "Причина 'Сюжет':", initialvalue="", parent=main_frame)
-    emotion_reason = simpledialog.askstring("Причина оценки", "Причина 'Эмоции':", initialvalue="", parent=main_frame)
-    influence_reason = simpledialog.askstring("Причина оценки", "Причина 'Влияние':", initialvalue="", parent=main_frame)
-    weights = genre_weights.get(genre)
-    if weights is None or genre == "безжанровый":
-        messagebox.showinfo("Информация", "Безжанровый режим активирован. Укажите веса вручную.")
-        try:
-            idea_w = float(simpledialog.askstring("Вес", "Вес для 'Идея':", parent=main_frame))
-            style_w = float(simpledialog.askstring("Вес", "Вес для 'Стиль':", parent=main_frame))
-            plot_w = float(simpledialog.askstring("Вес", "Вес для 'Сюжет':", parent=main_frame))
-            emotion_w = float(simpledialog.askstring("Вес", "Вес для 'Эмоции':", parent=main_frame))
-            influence_w = float(simpledialog.askstring("Вес", "Вес для 'Влияние' (бонус):", parent=main_frame))
-            weights = {"idea": idea_w, "style": style_w, "plot": plot_w, "emotion": emotion_w, "influence": influence_w}
-        except Exception:
-            messagebox.showerror("Ошибка", "Некорректный ввод весов.")
-            return
-    
-    final_score = calculate_final_score(idea, style, plot, emotion, influence, weights)
-    messagebox.showinfo("Итоговая оценка", f"Конечная оценка: {final_score:.2f}/100")
-    session = Session()
-    review = Review(title=title, author=author, evaluator=current_user, genre=genre,
-                    idea=idea, style=style, plot=plot, emotion=emotion, influence=influence,
-                    final_score=final_score, review_date=datetime.date.today(),
-                    idea_reason=idea_reason, style_reason=style_reason,
-                    plot_reason=plot_reason, emotion_reason=emotion_reason,
-                    influence_reason=influence_reason)
-    session.add(review)
-    session.commit()
-    session.close()
-    messagebox.showinfo("Отзыв", "Отзыв сохранён в базе данных.")
-
-def edit_review_ui():
-    review_id = simpledialog.askstring("Редактирование отзыва", "Введите ID отзыва для редактирования:", parent=main_frame)
-    if not review_id:
-        messagebox.showerror("Ошибка", "ID не указан!")
-        return
-    session = Session()
-    review = session.query(Review).filter_by(id=review_id).first()
-    if not review:
-        messagebox.showerror("Ошибка", "Отзыв не найден!")
-        session.close()
-        return
-    try:
-        new_idea = int(simpledialog.askstring("Редактирование отзыва", "Новая оценка 'Идея' (0-20):", parent=main_frame))
-    except (ValueError, TypeError):
-        messagebox.showerror("Ошибка", "Некорректное числовое значение для 'Идея'")
-        session.close()
-        return
-    # Проверка лимита для 'Идея'
-    if new_idea < 0 or new_idea > 20:
-        messagebox.showerror("Ошибка", "'Идея' должна быть от 0 до 20.")
-        session.close()
-        return
-    new_idea_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Идея':", parent=main_frame)
-    try:
-        new_style = int(simpledialog.askstring("Редактирование отзыва", "Новая оценка 'Стиль' (0-20):", parent=main_frame))
-    except (ValueError, TypeError):
-        messagebox.showerror("Ошибка", "Некорректное числовое значение для 'Стиль'")
-        session.close()
-        return
-    if new_style < 0 or new_style > 20:
-        messagebox.showerror("Ошибка", "'Стиль' должен быть от 0 до 20.")
-        session.close()
-        return
-    new_style_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Стиль':", parent=main_frame)
-    try:
-        new_plot = int(simpledialog.askstring("Редактирование отзыва", "Новая оценка 'Сюжет' (0-20):", parent=main_frame))
-    except (ValueError, TypeError):
-        messagebox.showerror("Ошибка", "Некорректное числовое значение для 'Сюжет'")
-        session.close()
-        return
-    if new_plot < 0 or new_plot > 20:
-        messagebox.showerror("Ошибка", "'Сюжет' должен быть от 0 до 20.")
-        session.close()
-        return
-    new_plot_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Сюжет':", parent=main_frame)
-    try:
-        new_emotion = int(simpledialog.askstring("Редактирование отзыва", "Новая оценка 'Эмоции' (0-20):", parent=main_frame))
-    except (ValueError, TypeError):
-        messagebox.showerror("Ошибка", "Некорректное числовое значение для 'Эмоции'")
-        session.close()
-        return
-    if new_emotion < 0 or new_emotion > 20:
-        messagebox.showerror("Ошибка", "'Эмоции' должны быть от 0 до 20.")
-        session.close()
-        return
-    new_emotion_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Эмоции':", parent=main_frame)
-    try:
-        new_influence = int(simpledialog.askstring("Редактирование отзыва", "Новая оценка 'Влияние' (0-20):", parent=main_frame))
-    except (ValueError, TypeError):
-        messagebox.showerror("Ошибка", "Некорректное числовое значение для 'Влияние'")
-        session.close()
-        return
-    if new_influence < 0 or new_influence > 20:
-        messagebox.showerror("Ошибка", "'Влияние' должно быть от 0 до 20.")
-        session.close()
-        return
-    new_influence_reason = simpledialog.askstring("Редактирование отзыва", "Новая причина 'Влияние':", parent=main_frame)
-    weights = genre_weights.get(review.genre)
-    if weights is None or review.genre == "безжанровый":
-        messagebox.showinfo("Информация", "Безжанровый режим: укажите новые веса вручную.")
-        try:
-            idea_w = float(simpledialog.askstring("Вес", "Новый вес для 'Идея':", parent=main_frame))
-            style_w = float(simpledialog.askstring("Вес", "Новый вес для 'Стиль':", parent=main_frame))
-            plot_w = float(simpledialog.askstring("Вес", "Новый вес для 'Сюжет':", parent=main_frame))
-            emotion_w = float(simpledialog.askstring("Вес", "Новый вес для 'Эмоции':", parent=main_frame))
-            influence_w = float(simpledialog.askstring("Вес", "Новый вес для 'Влияние':", parent=main_frame))
-            weights = {"idea": idea_w, "style": style_w, "plot": plot_w, "emotion": emotion_w, "influence": influence_w}
-        except Exception:
-            messagebox.showerror("Ошибка", "Некорректный ввод весов. Изменения не сохранены.")
-            session.close()
-            return
-    new_final_score = calculate_final_score(new_idea, new_style, new_plot, new_emotion, new_influence, weights)
-    review.idea = new_idea
-    review.idea_reason = new_idea_reason
-    review.style = new_style
-    review.style_reason = new_style_reason
-    review.plot = new_plot
-    review.plot_reason = new_plot_reason
-    review.emotion = new_emotion
-    review.emotion_reason = new_emotion_reason
-    review.influence = new_influence
-    review.influence_reason = new_influence_reason
-    review.final_score = new_final_score
-    review.review_date = datetime.date.today()
-    session.commit()
-    session.close()
-    messagebox.showinfo("Успех", f"Отзыв обновлён, новая оценка: {new_final_score:.2f}/100")
-
-# Для удаления отзыва можно оставить простое окно (без Toplevel), как и просмотр, через main_frame
-def delete_review_ui():
-    review_id = simpledialog.askstring("Удаление отзыва", "Введите ID отзыва для удаления:", parent=main_frame)
-    if not review_id:
-        messagebox.showerror("Ошибка", "ID не указан!")
-        return
-    session = Session()
-    review = session.query(Review).filter_by(id=review_id).first()
-    if not review:
-        messagebox.showerror("Ошибка", "Отзыв не найден!")
-        session.close()
-        return
-    # Вместо создания нового окна – используем simpledialog для выбора причины
-    reason = simpledialog.askstring("Причина удаления",
-                                    "Введите причину удаления (или стандарт: 'Не соответствует правилам', 'Нет причины критерий', 'Оценка не точна'):", parent=main_frame)
-    if reason is None:
-        session.close()
-        return
-    from database import DeletedReview
-    mapping = {"Не соответствует правилам": 1,
-               "Нет причины критерий": 2,
-               "Оценка не точна": 3}
-    if reason in mapping:
-        del_code = mapping[reason]
-        del_session = Session()
-        del_record = DeletedReview(review_id=int(review_id), deletion_reason=del_code)
-        del_session.add(del_record)
-        del_session.commit()
-        del_session.close()
-    else:
-        with open("deletion_log.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(f"Отзыв ID {review_id} удалён. Причина: {reason}\n")
-    session.delete(review)
-    session.commit()
-    session.close()
-    messagebox.showinfo("Удаление", "Отзыв успешно удалён.")
-
-# Функция смены пароля без изменений
-def change_password_ui():
-    # Очищаем main_frame и показываем форму смены пароля
-    for widget in main_frame.winfo_children():
-        widget.destroy()
         
-    Label(main_frame, text="Смена пароля", font=("Arial", 14)).pack(pady=10)
-    
-    current_pwd = Entry(main_frame, show="*")
-    current_pwd.insert(0, "Текущий пароль")
-    current_pwd.pack(pady=5)
-    
-    new_pwd = Entry(main_frame, show="*")
-    new_pwd.insert(0, "Новый пароль")
-    new_pwd.pack(pady=5)
-    
-    def perform_change():
-        curr = current_pwd.get().strip()
-        new = new_pwd.get().strip()
-        if not curr or not new:
-            messagebox.showerror("Ошибка", "Заполните все поля!")
+        try:
+            # Пошаговая инициализация с обновлением прогресса
+            update_status("Подключение к базе данных...", 20)
+            self.root.after(500)  # Имитация загрузки
+            
+            update_status("Создание таблиц...", 40)
+            create_tables()
+            self.root.after(500)
+            
+            update_status("Настройка интерфейса...", 60)
+            self.main_frame = ttk.Frame(self.root, padding=PADDING)
+            self.main_frame.pack(fill=BOTH, expand=True)
+            self.root.after(500)
+            
+            update_status("Завершение...", 100)
+            self.root.after(500)
+            
+        finally:
+            splash.destroy()
+            self.show_login_ui()
+
+    def on_close(self):
+        """Обработчик закрытия окна"""
+        if messagebox.askokcancel("Выход", "Вы действительно хотите выйти?"):
+            self.root.quit()
+            self.root.destroy()
+
+    def setup_styles(self):
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        
+        # Современные стили
+        self.style.configure(
+            'TButton',
+            padding=6,
+            relief="flat",
+            background="#2196f3",
+            font=('Arial', 10)
+        )
+        self.style.configure(
+            'TFrame',
+            background="#f5f5f5"
+        )
+        self.style.configure(
+            'Header.TLabel',
+            font=('Arial', 14, 'bold'),
+            background="#f5f5f5",
+            padding=10
+        )
+
+    def show_login_ui(self):
+        """Улучшенное окно входа"""
+        self.clear_frame()
+        
+        ttk.Label(
+            self.main_frame,
+            text="Добро пожаловать!",
+            style='Header.TLabel'
+        ).pack(pady=10)
+        
+        # Форма входа
+        login_frame = ttk.LabelFrame(self.main_frame, text="Вход в систему", padding=20)
+        login_frame.pack(padx=20, pady=20)
+        
+        # Username
+        ttk.Label(login_frame, text="Логин:").grid(row=0, column=0, pady=5, sticky='e')
+        username_var = StringVar()
+        username_entry = ttk.Entry(login_frame, textvariable=username_var, width=30)
+        username_entry.grid(row=0, column=1, padx=5, pady=5)
+        
+        # Password
+        ttk.Label(login_frame, text="Пароль:").grid(row=1, column=0, pady=5, sticky='e')
+        password_var = StringVar()
+        password_entry = ttk.Entry(
+            login_frame,
+            textvariable=password_var,
+            show="*",
+            width=30
+        )
+        password_entry.grid(row=1, column=1, padx=5, pady=5)
+        
+        # Buttons
+        button_frame = ttk.Frame(login_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=15)
+        
+        def try_login():
+            username = username_var.get().strip()
+            password = password_var.get().strip()
+            
+            if not username or not password:
+                messagebox.showerror("Ошибка", "Заполните все поля!")
+                return
+                
+            if login_editor(username, password):
+                self.current_user = username
+                self.show_main_menu()
+            else:
+                messagebox.showerror("Ошибка", "Неверные учетные данные")
+                password_var.set("")
+        
+        ttk.Button(
+            button_frame,
+            text="Войти",
+            command=try_login,
+            width=15
+        ).pack(side=LEFT, padx=5)
+        
+        ttk.Button(
+            button_frame,
+            text="Регистрация",
+            command=self.show_register_ui,
+            width=15
+        ).pack(side=LEFT, padx=5)
+        
+        # Bind Enter key
+        username_entry.bind('<Return>', lambda e: password_entry.focus())
+        password_entry.bind('<Return>', lambda e: try_login())
+        
+        # Set initial focus
+        username_entry.focus()
+
+    def clear_frame(self):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+
+    def show_main_menu(self):
+        self.clear_frame()
+        
+        ttk.Label(
+            self.main_frame,
+            text=f"Главное меню | Пользователь: {self.current_user}",
+            style='Header.TLabel'
+        ).pack()
+        
+        # Создаем фрейм для кнопок с прокруткой
+        canvas = Canvas(self.main_frame)
+        scrollbar = ttk.Scrollbar(self.main_frame, orient=VERTICAL, command=canvas.yview)
+        buttons_frame = ttk.Frame(canvas)
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Добавляем кнопки меню
+        menu_buttons = [
+            ("Написать отзыв", self.show_write_review_ui),
+            ("Просмотреть отзывы", self.show_reviews_list),
+            ("Поиск отзывов", self.show_search_ui),
+            ("Статистика", self.show_statistics_ui),
+            ("Настройки", self.show_settings_ui),
+            ("Выход", self.logout)
+        ]
+        
+        for text, command in menu_buttons:
+            ttk.Button(
+                buttons_frame,
+                text=text,
+                command=command,
+                width=BUTTON_WIDTH
+            ).pack(pady=3)
+        
+        # Настраиваем прокрутку
+        canvas.create_window((0, 0), window=buttons_frame, anchor=NW)
+        buttons_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.pack(side=LEFT, fill=BOTH, expand=True, padx=5, pady=5)
+        scrollbar.pack(side=RIGHT, fill=Y)
+
+    def show_write_review_ui(self):
+        """Окно создания нового отзыва"""
+        self.clear_frame()
+        
+        ttk.Label(self.main_frame, text="Новый отзыв", style='Header.TLabel').pack()
+        
+        # Создаем фрейм для полей ввода
+        input_frame = ttk.Frame(self.main_frame)
+        input_frame.pack(pady=10, padx=10, fill=X)
+        
+        # Базовая информация
+        fields = {
+            'title': ('Название книги', ''),
+            'author': ('Автор', ''),
+            'genre': ('Жанр', '')
+        }
+        
+        entries = {}
+        for key, (label, default) in fields.items():
+            frame = ttk.Frame(input_frame)
+            frame.pack(fill=X, pady=5)
+            ttk.Label(frame, text=label).pack(side=LEFT)
+            entry = ttk.Entry(frame)
+            entry.pack(side=RIGHT, expand=True, fill=X, padx=10)
+            entry.insert(0, default)
+            entries[key] = entry
+            
+        # Оценки
+        scores_frame = ttk.LabelFrame(self.main_frame, text="Оценки (0-20)")
+        scores_frame.pack(pady=10, padx=10, fill=X)
+        
+        score_entries = {}
+        for field in ['idea', 'style', 'plot', 'emotion', 'influence']:
+            frame = ttk.Frame(scores_frame)
+            frame.pack(fill=X, pady=5)
+            ttk.Label(frame, text=field.capitalize()).pack(side=LEFT)
+            entry = ttk.Entry(frame, width=10)
+            entry.pack(side=RIGHT, padx=10)
+            score_entries[field] = entry
+            
+            # Поле для причины
+            reason_entry = ttk.Entry(frame)
+            reason_entry.pack(side=RIGHT, expand=True, fill=X, padx=10)
+            reason_entry.insert(0, f"Причина для {field}")
+            score_entries[f"{field}_reason"] = reason_entry
+
+        def save_review():
+            # Валидация данных
+            try:
+                scores = {k: int(score_entries[k].get()) for k in ['idea', 'style', 'plot', 'emotion', 'influence']}
+                for score in scores.values():
+                    if not 0 <= score <= 20:
+                        raise ValueError("Оценки должны быть от 0 до 20")
+                        
+                reasons = {f"{k}_reason": score_entries[f"{k}_reason"].get() 
+                         for k in ['idea', 'style', 'plot', 'emotion', 'influence']}
+                
+                title = entries['title'].get().strip()
+                author = entries['author'].get().strip()
+                genre = entries['genre'].get().strip().lower()
+                
+                if not all([title, author, genre]):
+                    raise ValueError("Заполните все поля")
+                
+                # Получение весов для жанра
+                weights = genre_weights.get(genre)
+                if not weights:
+                    weights = self.get_custom_weights()
+                    if not weights:
+                        return
+                
+                # Расчет итоговой оценки
+                final_score = calculate_final_score(
+                    scores['idea'], scores['style'], scores['plot'],
+                    scores['emotion'], scores['influence'], weights
+                )
+                
+                # Сохранение в БД
+                session = Session()
+                review = Review(
+                    title=title, author=author,
+                    evaluator=self.current_user,
+                    genre=genre,
+                    **scores,
+                    **reasons,
+                    final_score=final_score,
+                    review_date=datetime.date.today()
+                )
+                session.add(review)
+                session.commit()
+                session.close()
+                
+                messagebox.showinfo("Успех", f"Отзыв сохранен. Итоговая оценка: {final_score:.2f}/100")
+                self.show_main_menu()
+                
+            except ValueError as e:
+                messagebox.showerror("Ошибка", str(e))
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Неизвестная ошибка: {e}")
+
+        # Кнопки действий
+        buttons_frame = ttk.Frame(self.main_frame)
+        buttons_frame.pack(pady=20)
+        
+        ttk.Button(buttons_frame, text="Сохранить", command=save_review).pack(side=LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Отмена", command=self.show_main_menu).pack(side=LEFT, padx=5)
+
+    def get_custom_weights(self):
+        """Получение пользовательских весов для безжанровой книги"""
+        weights_window = Toplevel(self.root)
+        weights_window.title("Указание весов")
+        weights_window.geometry("300x250")
+        
+        entries = {}
+        for field in ['idea', 'style', 'plot', 'emotion', 'influence']:
+            frame = ttk.Frame(weights_window)
+            frame.pack(fill=X, pady=5, padx=10)
+            ttk.Label(frame, text=f"Вес для {field}:").pack(side=LEFT)
+            entry = ttk.Entry(frame, width=10)
+            entry.pack(side=RIGHT)
+            entries[field] = entry
+            
+        result = {}
+        
+        def save_weights():
+            try:
+                weights = {k: float(entries[k].get()) for k in entries}
+                if abs(sum(weights.values()) - 1.0) > 0.01:
+                    raise ValueError("Сумма весов должна быть равна 1")
+                result.update(weights)
+                weights_window.destroy()
+            except ValueError as e:
+                messagebox.showerror("Ошибка", str(e))
+                
+        ttk.Button(weights_window, text="Сохранить", command=save_weights).pack(pady=10)
+        
+        weights_window.wait_window()
+        return result if result else None
+
+    def show_change_password_ui(self):
+        self.clear_frame()
+        ttk.Label(self.main_frame, text="Смена пароля", style='Header.TLabel').pack()
+        
+        frame = ttk.Frame(self.main_frame)
+        frame.pack(pady=20)
+        
+        current_pwd = ttk.Entry(frame, show="*")
+        current_pwd.insert(0, "Текущий пароль")
+        current_pwd.pack(pady=5)
+        
+        new_pwd = ttk.Entry(frame, show="*")
+        new_pwd.insert(0, "Новый пароль")
+        new_pwd.pack(pady=5)
+        
+        def change_pwd():
+            current = current_pwd.get().strip()
+            new = new_pwd.get().strip()
+            
+            session = Session()
+            editor = session.query(Editor).filter_by(username=self.current_user).first()
+            
+            if bcrypt.checkpw(current.encode(), editor.password_hash.encode()):
+                editor.password_hash = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
+                session.commit()
+                messagebox.showinfo("Успех", "Пароль изменен")
+                self.show_main_menu()
+            else:
+                messagebox.showerror("Ошибка", "Неверный текущий пароль")
+            session.close()
+        
+        ttk.Button(frame, text="Изменить пароль", command=change_pwd).pack(pady=5)
+        ttk.Button(frame, text="Назад", command=self.show_main_menu).pack(pady=5)
+
+    def show_delete_review_ui(self):
+        self.clear_frame()
+        ttk.Label(self.main_frame, text="Удаление отзыва", style='Header.TLabel').pack()
+        
+        session = Session()
+        reviews = session.query(Review).all()
+        
+        if not reviews:
+            ttk.Label(self.main_frame, text="Нет отзывов для удаления").pack(pady=20)
+            session.close()
+            ttk.Button(self.main_frame, text="Назад", command=self.show_main_menu).pack()
             return
+            
+        for review in reviews:
+            frame = ttk.Frame(self.main_frame)
+            frame.pack(fill=X, pady=5, padx=10)
+            
+            ttk.Label(frame, text=f"{review.title} ({review.final_score}/100)").pack(side=LEFT)
+            
+            def make_delete_command(rev_id):
+                return lambda: self.delete_review(rev_id)
+                
+            ttk.Button(frame, text="Удалить", 
+                      command=make_delete_command(review.id)).pack(side=RIGHT)
+                      
+        session.close()
+        ttk.Button(self.main_frame, text="Назад", command=self.show_main_menu).pack(pady=20)
+
+    def delete_review(self, review_id):
+        if messagebox.askyesno("Подтверждение", "Вы уверены, что хотите удалить этот отзыв?"):
+            reasons = ["Не соответствует правилам", "Нет причины критерий", "Оценка не точна", "Другое"]
+            reason = simpledialog.askstring(
+                "Причина удаления",
+                "Укажите причину удаления:",
+                initialvalue=reasons[0]
+            )
+            if reason:
+                session = Session()
+                review = session.query(Review).filter_by(id=review_id).first()
+                if review:
+                    session.delete(review)
+                    session.commit()
+                    
+                    # Сохраняем информацию об удалении
+                    del_review = DeletedReview(
+                        review_id=review_id,
+                        deletion_reason=reasons.index(reason) + 1 if reason in reasons else 0
+                    )
+                    session.add(del_review)
+                    session.commit()
+                    
+                session.close()
+                self.show_delete_review_ui()  # Обновляем список
+
+    def show_reviews_list(self):
+        """Показ списка отзывов в основном фрейме"""
+        self.clear_frame()
+        
+        # Заголовок и управление
+        header_frame = ttk.Frame(self.main_frame)
+        header_frame.pack(fill=X, pady=5)
+        
+        ttk.Label(
+            header_frame,
+            text="Список отзывов",
+            style='Header.TLabel'
+        ).pack(side=LEFT)
+        
+        # Кнопка сравнения
+        ttk.Button(
+            header_frame,
+            text="Сравнить выбранные",
+            command=self.compare_selected_reviews
+        ).pack(side=RIGHT, padx=5)
+        
+        # Фрейм поиска и списка
+        content_frame = ttk.Frame(self.main_frame)
+        content_frame.pack(fill=BOTH, expand=True)
+        
+        # Поиск
+        search_frame = ttk.Frame(content_frame)
+        search_frame.pack(fill=X, pady=5)
+        
+        search_var = StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var)
+        search_entry.pack(side=LEFT, fill=X, expand=True)
+        
+        def filter_reviews():
+            query = search_var.get().strip()
+            self.update_reviews_list(query)
+            
+        ttk.Button(
+            search_frame,
+            text="Поиск",
+            command=filter_reviews
+        ).pack(side=RIGHT, padx=5)
+        
+        # Список отзывов с чекбоксами
+        self.selected_reviews = []  # Для хранения выбранных отзывов
+        self.update_reviews_list("")
+        
+        # Нижняя панель с кнопками
+        button_frame = ttk.Frame(self.main_frame)
+        button_frame.pack(fill=X, pady=5)
+        
+        ttk.Button(
+            button_frame,
+            text="Назад в меню",
+            command=self.show_main_menu
+        ).pack(side=RIGHT)
+
+    def compare_selected_reviews(self):
+        """Сравнение выбранных отзывов"""
+        if len(self.selected_reviews) < 2:
+            messagebox.showwarning(
+                "Предупреждение",
+                "Выберите минимум 2 книги для сравнения"
+            )
+            return
+        
+        if len(self.selected_reviews) > 5:
+            messagebox.showwarning(
+                "Предупреждение",
+                "Можно сравнивать максимум 5 книг"
+            )
+            return
+            
+        # Создаем окно сравнения
+        comparison_window = Toplevel(self.root)
+        comparison_window.title("Сравнение книг")
+        comparison_window.geometry("800x600")
+        
+        # Показываем графики
+        fig = ReviewAnalytics.compare_reviews(self.selected_reviews)
+        
+        # Показываем текстовый отчет
+        text_report = ReviewAnalytics.get_comparison_report(self.selected_reviews)
+        text_area = Text(comparison_window, wrap=WORD)
+        text_area.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        text_area.insert(END, text_report)
+        
+        def save_comparison():
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG files", "*.png")]
+            )
+            if filename:
+                ReviewAnalytics.compare_reviews(
+                    self.selected_reviews,
+                    save_path=filename
+                )
+                
+        ttk.Button(
+            comparison_window,
+            text="Сохранить график",
+            command=save_comparison
+        ).pack(pady=5)
+
+    def update_reviews_list(self, query, container=None):
+        """Обновленный метод с поддержкой выбора отзывов"""
+        if container is None:
+            for widget in self.main_frame.winfo_children():
+                if isinstance(widget, ttk.Frame):
+                    container = widget
+                    break
+        
+        for widget in container.winfo_children():
+            widget.destroy()
             
         session = Session()
-        editor = session.query(Editor).filter_by(username=current_user).first()
-        if not editor:
-            messagebox.showerror("Ошибка", "Пользователь не найден!")
-            session.close()
-            return
-            
-        if not bcrypt.checkpw(curr.encode(), editor.password_hash.encode()):
-            messagebox.showerror("Ошибка", "Неверный текущий пароль!")
-            session.close()
-            return
-            
-        editor.password_hash = bcrypt.hashpw(new.encode(), bcrypt.gensalt()).decode()
-        try:
-            session.commit()
-            messagebox.showinfo("Успех", "Пароль успешно изменён!")
-            show_menu_ui()  # Возврат в главное меню
-        except Exception as e:
-            session.rollback()
-            messagebox.showerror("Ошибка", f"Ошибка смены пароля: {e}")
-        finally:
-            session.close()
-    
-    Button(main_frame, text="Сменить пароль", width=25, command=perform_change).pack(pady=5)
-    Button(main_frame, text="Назад", width=25, command=show_menu_ui).pack(pady=5)
-
-# Функция просмотра отзывов – можем вывести их в окно, созданное внутри main_frame
-def view_reviews_ui():
-    session = Session()
-    reviews = session.query(Review).all()
-    session.close()
-    # Создаём область для просмотра внутри main_frame
-    for widget in main_frame.winfo_children():
-        widget.destroy()
-    Label(main_frame, text="Список отзывов", font=("Arial", 14)).pack(pady=10)
-    text_area = Text(main_frame, width=80, height=20)
-    text_area.pack(padx=10, pady=10)
-    if not reviews:
-        text_area.insert(END, "❌ Нет сохранённых оценок.")
-    else:
-        for review in reviews:
-            text_area.insert(END, f"ID: {review.id}\n")
-            text_area.insert(END, f"📖 {review.title} ({review.author}) - {review.genre}\n")
-            text_area.insert(END, f"Оценка: {review.final_score}/100\n")
-            text_area.insert(END, f"Оценил: {review.evaluator} | Дата: {review.review_date}\n")
-            text_area.insert(END, f"Причина 'Идея': {review.idea_reason}\n")
-            text_area.insert(END, f"Причина 'Стиль': {review.style_reason}\n")
-            text_area.insert(END, f"Причина 'Сюжет': {review.plot_reason}\n")
-            text_area.insert(END, f"Причина 'Эмоции': {review.emotion_reason}\n")
-            text_area.insert(END, f"Причина 'Влияние': {review.influence_reason}\n")
-            text_area.insert(END, "-------------------------\n")
-    Button(main_frame, text="Назад в меню", width=25, command=show_menu_ui).pack(pady=5)
-
-# Новая функция регистрации через UI
-def register():
-    username = simpledialog.askstring("Регистрация", "Введите новый логин:", parent=main_frame)
-    password = simpledialog.askstring("Регистрация", "Введите новый пароль:", show='*', parent=main_frame)
-    if not username or not password:
-        messagebox.showerror("Ошибка", "Все поля должны быть заполнены!")
-        return
-    session = Session()
-    existing = session.query(Editor).filter_by(username=username).first()
-    if existing:
-        messagebox.showerror("Ошибка", "Такой логин уже существует.")
-        session.close()
-        return
-    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    new_editor = Editor(username=username, password_hash=password_hash)
-    session.add(new_editor)
-    try:
-        session.commit()
-        messagebox.showinfo("Регистрация", "Редактор зарегистрирован.")
-    except Exception as e:
-        session.rollback()
-        messagebox.showerror("Ошибка", f"Ошибка регистрации: {e}")
-    session.close()
-
-def create_ui():
-    global root, main_frame
-    root = Tk()
-    root.title("Система оценки книг")
-    root.geometry("600x500")
-    
-    # Устанавливаем стиль
-    style = ttk.Style()
-    style.theme_use('clam')
-    
-    # Настройка стилей для кнопок и фреймов
-    style.configure('TButton', padding=6, relief="flat", background="#2196f3")
-    style.configure('TFrame', background="#f5f5f5")
-    style.configure('TLabel', background="#f5f5f5", font=('Arial', 10))
-    
-    splash = show_loading_screen()
-    db_thread = initialize_database()
-    
-    main_frame = ttk.Frame(root, padding="10")
-    main_frame.pack(fill=BOTH, expand=True)
-    
-    # Ждём завершения инициализации БД
-    def check_ready():
-        if db_thread.is_alive():
-            root.after(100, check_ready)
+        reviews = ReviewAnalytics.search_reviews(query)
+        
+        if not reviews:
+            ttk.Label(container, text="Отзывы не найдены").pack(pady=10)
         else:
-            show_login_ui()
-    
-    root.after(100, check_ready)
-    root.mainloop()
+            for review in reviews:
+                review_frame = ttk.Frame(container)
+                review_frame.pack(fill=X, pady=2)
+                
+                var = BooleanVar()
+                check = ttk.Checkbutton(
+                    review_frame,
+                    variable=var,
+                    command=lambda r=review, v=var: self.on_review_select(r, v)
+                )
+                check.pack(side=LEFT)
+                
+                # Основная информация
+                info_frame = ttk.Frame(review_frame)
+                info_frame.pack(fill=X)
+                
+                ttk.Label(
+                    info_frame,
+                    text=f"📖 {review.title}",
+                    font=('Arial', 10, 'bold')
+                ).pack(side=LEFT)
+                
+                ttk.Label(
+                    info_frame,
+                    text=f"Оценка: {review.final_score:.1f}/100"
+                ).pack(side=RIGHT)
+                
+                # Кнопки действий
+                buttons_frame = ttk.Frame(review_frame)
+                buttons_frame.pack(fill=X, pady=2)
+                
+                def make_edit_command(rev):
+                    return lambda: self.edit_review_inline(rev, review_frame)
+                    
+                def make_delete_command(rev_id):
+                    return lambda: self.delete_review_with_confirm(rev_id)
+                
+                ttk.Button(
+                    buttons_frame,
+                    text="Редактировать",
+                    command=make_edit_command(review)
+                ).pack(side=LEFT, padx=2)
+                
+                ttk.Button(
+                    buttons_frame,
+                    text="Удалить",
+                    command=make_delete_command(review.id)
+                ).pack(side=LEFT, padx=2)
+                
+                ttk.Separator(review_frame, orient=HORIZONTAL).pack(fill=X, pady=5)
+                
+        session.close()
+
+    def on_review_select(self, review, var):
+        """Обработка выбора отзыва для сравнения"""
+        if var.get():
+            if review not in self.selected_reviews:
+                self.selected_reviews.append(review)
+        else:
+            if review in self.selected_reviews:
+                self.selected_reviews.remove(review)
+
+    def edit_review_inline(self, review, container):
+        """Редактирование отзыва прямо в списке"""
+        for widget in container.winfo_children():
+            widget.destroy()
+            
+        # Поля для редактирования
+        fields_frame = ttk.Frame(container)
+        fields_frame.pack(fill=X, pady=5)
+        
+        entries = {}
+        for field in ['idea', 'style', 'plot', 'emotion', 'influence']:
+            frame = ttk.Frame(fields_frame)
+            frame.pack(fill=X, pady=2)
+            
+            ttk.Label(frame, text=field.capitalize()).pack(side=LEFT)
+            entry = ttk.Entry(frame, width=10)
+            entry.insert(0, str(getattr(review, field)))
+            entry.pack(side=RIGHT)
+            entries[field] = entry
+            
+            reason_entry = ttk.Entry(frame)
+            reason_entry.insert(0, getattr(review, f"{field}_reason"))
+            reason_entry.pack(side=RIGHT, fill=X, expand=True, padx=5)
+            entries[f"{field}_reason"] = reason_entry
+            
+        def save_changes():
+            try:
+                # Валидация и сохранение изменений
+                scores = {k: int(entries[k].get()) for k in ['idea', 'style', 'plot', 'emotion', 'influence']}
+                reasons = {f"{k}_reason": entries[f"{k}_reason"].get() 
+                         for k in ['idea', 'style', 'plot', 'emotion', 'influence']}
+                
+                
+                for score in scores.values():
+                    if not 0 <= score <= 20:
+                        raise ValueError("Оценки должны быть от 0 до 20")
+                
+                # Получаем веса для расчета
+                weights = genre_weights.get(review.genre)
+                if not weights:
+                    weights = self.get_custom_weights()
+                    if not weights:
+                        return
+                
+                final_score = calculate_final_score(
+                    scores['idea'], scores['style'],
+                    scores['plot'], scores['emotion'],
+                    scores['influence'], weights
+                )
+                
+                session = Session()
+                db_review = session.query(Review).get(review.id)
+                
+                for k, v in scores.items():
+                    setattr(db_review, k, v)
+                for k, v in reasons.items():
+                    setattr(db_review, k, v)
+                    
+                db_review.final_score = final_score
+                db_review.review_date = datetime.date.today()
+                
+                session.commit()
+                session.close()
+                
+                self.update_reviews_list("")  # Обновляем список
+                
+            except ValueError as e:
+                messagebox.showerror("Ошибка", str(e))
+                
+        # Кнопки действий
+        ttk.Button(
+            container,
+            text="Сохранить",
+            command=save_changes
+        ).pack(side=LEFT, padx=5)
+        
+        ttk.Button(
+            container,
+            text="Отмена",
+            command=lambda: self.update_reviews_list("")
+        ).pack(side=LEFT)
+
+    def logout(self):
+        """Выход из системы"""
+        if messagebox.askyesno("Подтверждение", "Вы действительно хотите выйти?"):
+            self.current_user = None
+            self.show_login_ui()
+
+    def show_register_ui(self):
+        """Окно регистрации нового пользователя"""
+        register_window = Toplevel(self.root)
+        register_window.title("Регистрация")
+        register_window.geometry("300x200")
+        register_window.transient(self.root)
+        register_window.grab_set()
+        
+        frame = ttk.LabelFrame(register_window, text="Регистрация нового пользователя", padding=20)
+        frame.pack(padx=20, pady=20, fill=BOTH, expand=True)
+        
+        # Username
+        ttk.Label(frame, text="Логин:").pack(fill=X)
+        username_var = StringVar()
+        username_entry = ttk.Entry(frame, textvariable=username_var)
+        username_entry.pack(fill=X, pady=(0, 10))
+        
+        # Password
+        ttk.Label(frame, text="Пароль:").pack(fill=X)
+        password_var = StringVar()
+        password_entry = ttk.Entry(frame, textvariable=password_var, show="*")
+        password_entry.pack(fill=X, pady=(0, 10))
+        
+        def try_register():
+            username = username_var.get().strip()
+            password = password_var.get().strip()
+            
+            if not username or not password:
+                messagebox.showerror("Ошибка", "Заполните все поля!")
+                return
+                
+            session = Session()
+            existing = session.query(Editor).filter_by(username=username).first()
+            
+            if existing:
+                messagebox.showerror("Ошибка", "Такой пользователь уже существует!")
+                session.close()
+                return
+                
+            password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+            new_editor = Editor(username=username, password_hash=password_hash)
+            
+            try:
+                session.add(new_editor)
+                session.commit()
+                messagebox.showinfo("Успех", "Регистрация успешна!")
+                register_window.destroy()
+            except Exception as e:
+                session.rollback()
+                messagebox.showerror("Ошибка", f"Ошибка регистрации: {e}")
+            finally:
+                session.close()
+        
+        # Кнопки
+        button_frame = ttk.Frame(frame)
+        button_frame.pack(fill=X, pady=(10, 0))
+        
+        ttk.Button(
+            button_frame,
+            text="Зарегистрироваться",
+            command=try_register
+        ).pack(side=LEFT, padx=5)
+        
+        ttk.Button(
+            button_frame,
+            text="Отмена",
+            command=register_window.destroy
+        ).pack(side=LEFT)
+        
+        # Фокус и бинды
+        username_entry.focus()
+        username_entry.bind('<Return>', lambda e: password_entry.focus())
+        password_entry.bind('<Return>', lambda e: try_register())
+
+def main():
+    app = BookReviewUI()
+    app.root.mainloop()
 
 if __name__ == "__main__":
-    create_ui()
+    main()
