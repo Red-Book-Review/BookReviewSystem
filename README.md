@@ -1,0 +1,1 @@
+Hey, so the idea behind the code was to create something really special for the Red Book Review project. We wanted to give our amazing editors free access to a simple and easy way to evaluate literary and scholarly works. The code is based on five super important criteria that are key for evaluation.
